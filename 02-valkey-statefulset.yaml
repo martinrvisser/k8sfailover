@@ -1,0 +1,326 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: valkey-0
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/component: node
+spec:
+  hostname: valkey-0
+  subdomain: valkey-headless
+  restartPolicy: Never
+
+  initContainers:
+    - name: init-valkey
+      image: percona/valkey-bundle:9.1-hardened
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          mkdir -p /data/conf
+          NS=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+          SENTINEL_SVC="valkey-sentinel.${NS}.svc.cluster.local"
+
+          cat > /data/conf/valkey.conf <<EOF
+          port 6379
+          protected-mode no
+          bind 0.0.0.0
+          dir /data
+          appendonly yes
+          enable-debug-command local
+          EOF
+
+          # Query sentinel for the current master.
+          # On initial deploy sentinel is not yet running (empty response) or
+          # reports valkey-0 as master — either way we start as primary.
+          # On recovery after failover sentinel reports the new master and we
+          # inject replicaof immediately so no Sentinel reconfiguration delay.
+          MASTER_INFO=$(timeout 3 valkey-cli -h "$SENTINEL_SVC" -p 26379 \
+            sentinel get-master-addr-by-name mymaster 2>/dev/null || true)
+          MASTER_HOST=$(printf '%s\n' "$MASTER_INFO" | head -1 | tr -d '[:space:]')
+          case "$MASTER_HOST" in
+            valkey-0*|"")
+              echo "Starting as primary (sentinel absent or elected us)"
+              ;;
+            *)
+              MASTER_PORT=$(printf '%s\n' "$MASTER_INFO" | tail -1 | tr -d '[:space:]')
+              echo "replicaof $MASTER_HOST ${MASTER_PORT:-6379}" >> /data/conf/valkey.conf
+              echo "Starting as replica of $MASTER_HOST:${MASTER_PORT:-6379}"
+              ;;
+          esac
+      volumeMounts:
+        - name: valkey-data
+          mountPath: /data
+
+  containers:
+    - name: valkey
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["valkey-server", "/data/conf/valkey.conf"]
+      ports:
+        - name: valkey
+          containerPort: 6379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 30
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "ping"]
+        initialDelaySeconds: 5
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      volumeMounts:
+        - name: valkey-data
+          mountPath: /data
+
+    - name: sentinel
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["sh", "/etc/sentinel/sentinel-init.sh"]
+      ports:
+        - name: sentinel
+          containerPort: 26379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 15
+        periodSeconds: 5
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      volumeMounts:
+        - name: sentinel-config
+          mountPath: /etc/sentinel
+
+  volumes:
+    - name: sentinel-config
+      configMap:
+        name: valkey-sentinel-config
+        defaultMode: 0755
+    - name: valkey-data
+      emptyDir: {}
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: valkey-1
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/component: node
+spec:
+  hostname: valkey-1
+  subdomain: valkey-headless
+  restartPolicy: Never
+
+  initContainers:
+    - name: init-valkey
+      image: percona/valkey-bundle:9.1-hardened
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          mkdir -p /data/conf
+          PRIMARY_HOST="valkey-0.valkey-headless.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local"
+          cat > /data/conf/valkey.conf <<EOF
+          port 6379
+          protected-mode no
+          bind 0.0.0.0
+          dir /data
+          appendonly yes
+          enable-debug-command local
+          EOF
+          echo "replicaof $PRIMARY_HOST 6379" >> /data/conf/valkey.conf
+          echo "Starting as replica of $PRIMARY_HOST"
+      volumeMounts:
+        - name: valkey-data
+          mountPath: /data
+
+  containers:
+    - name: valkey
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["valkey-server", "/data/conf/valkey.conf"]
+      ports:
+        - name: valkey
+          containerPort: 6379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 30
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "ping"]
+        initialDelaySeconds: 5
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      volumeMounts:
+        - name: valkey-data
+          mountPath: /data
+
+    - name: sentinel
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["sh", "/etc/sentinel/sentinel-init.sh"]
+      ports:
+        - name: sentinel
+          containerPort: 26379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 15
+        periodSeconds: 5
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      volumeMounts:
+        - name: sentinel-config
+          mountPath: /etc/sentinel
+
+  volumes:
+    - name: sentinel-config
+      configMap:
+        name: valkey-sentinel-config
+        defaultMode: 0755
+    - name: valkey-data
+      emptyDir: {}
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: valkey-2
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/component: node
+spec:
+  hostname: valkey-2
+  subdomain: valkey-headless
+  restartPolicy: Never
+
+  initContainers:
+    - name: init-valkey
+      image: percona/valkey-bundle:9.1-hardened
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+          mkdir -p /data/conf
+          PRIMARY_HOST="valkey-0.valkey-headless.$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace).svc.cluster.local"
+          cat > /data/conf/valkey.conf <<EOF
+          port 6379
+          protected-mode no
+          bind 0.0.0.0
+          dir /data
+          appendonly yes
+          enable-debug-command local
+          EOF
+          echo "replicaof $PRIMARY_HOST 6379" >> /data/conf/valkey.conf
+          echo "Starting as replica of $PRIMARY_HOST"
+      volumeMounts:
+        - name: valkey-data
+          mountPath: /data
+
+  containers:
+    - name: valkey
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["valkey-server", "/data/conf/valkey.conf"]
+      ports:
+        - name: valkey
+          containerPort: 6379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 30
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "ping"]
+        initialDelaySeconds: 5
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+      volumeMounts:
+        - name: valkey-data
+          mountPath: /data
+
+    - name: sentinel
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["sh", "/etc/sentinel/sentinel-init.sh"]
+      ports:
+        - name: sentinel
+          containerPort: 26379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 15
+        periodSeconds: 5
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      volumeMounts:
+        - name: sentinel-config
+          mountPath: /etc/sentinel
+
+  volumes:
+    - name: sentinel-config
+      configMap:
+        name: valkey-sentinel-config
+        defaultMode: 0755
+    - name: valkey-data
+      emptyDir: {}

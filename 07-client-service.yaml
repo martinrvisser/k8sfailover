@@ -1,0 +1,31 @@
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${NAMESPACE}
+
+---
+# Client-facing stable write endpoint
+# This is what applications connect to - never changes
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey-endpoint
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: proxy
+spec:
+  type: ClusterIP
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey
+      protocol: TCP
+    - name: stats
+      port: 8404
+      targetPort: stats
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: proxy

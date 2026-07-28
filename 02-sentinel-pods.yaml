@@ -1,0 +1,148 @@
+# Standalone sentinel pods for 2-node Valkey mode.
+#
+# These carry the same app.kubernetes.io/component: node label as the Valkey
+# pods so that the existing valkey-sentinel ClusterIP service (which selects
+# on that label, port 26379) routes to them without any service YAML changes.
+#
+# restartPolicy: Always — sentinels should restart on crash; they are NOT the
+# pods we delete to simulate a failover, so auto-restart is correct here.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sentinel-0
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/component: node
+spec:
+  restartPolicy: Always
+
+  containers:
+    - name: sentinel
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["sh", "/etc/sentinel/sentinel-init.sh"]
+      ports:
+        - name: sentinel
+          containerPort: 26379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 15
+        periodSeconds: 5
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      volumeMounts:
+        - name: sentinel-config
+          mountPath: /etc/sentinel
+
+  volumes:
+    - name: sentinel-config
+      configMap:
+        name: valkey-sentinel-config
+        defaultMode: 0755
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sentinel-1
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/component: node
+spec:
+  restartPolicy: Always
+
+  containers:
+    - name: sentinel
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["sh", "/etc/sentinel/sentinel-init.sh"]
+      ports:
+        - name: sentinel
+          containerPort: 26379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 15
+        periodSeconds: 5
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      volumeMounts:
+        - name: sentinel-config
+          mountPath: /etc/sentinel
+
+  volumes:
+    - name: sentinel-config
+      configMap:
+        name: valkey-sentinel-config
+        defaultMode: 0755
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sentinel-2
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: valkey
+    app.kubernetes.io/component: node
+spec:
+  restartPolicy: Always
+
+  containers:
+    - name: sentinel
+      image: percona/valkey-bundle:9.1-hardened
+      command: ["sh", "/etc/sentinel/sentinel-init.sh"]
+      ports:
+        - name: sentinel
+          containerPort: 26379
+          protocol: TCP
+      livenessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 15
+        periodSeconds: 5
+      readinessProbe:
+        exec:
+          command: ["valkey-cli", "-p", "26379", "ping"]
+        initialDelaySeconds: 10
+        periodSeconds: 3
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      volumeMounts:
+        - name: sentinel-config
+          mountPath: /etc/sentinel
+
+  volumes:
+    - name: sentinel-config
+      configMap:
+        name: valkey-sentinel-config
+        defaultMode: 0755

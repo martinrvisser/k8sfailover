@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: haproxy
+    app.kubernetes.io/component: proxy
+data:
+  haproxy.cfg: |
+    global
+      log stdout format raw local0 info
+      maxconn 4096
+      stats socket /var/run/haproxy/haproxy.sock mode 660 level admin expose-fd listeners
+      stats timeout 30s
+
+    resolvers k8sdns
+      nameserver dns1 kube-dns.kube-system.svc.cluster.local:53
+      accepted_payload_size 8192
+      resolve_retries 3
+      timeout resolve 5s
+      timeout retry 5s
+      hold valid 1s
+      hold other 30s
+      hold refused 30s
+      hold nx 30s
+      hold timeout 30s
+      hold obsolete 30s
+
+    defaults
+      log     global
+      mode    tcp
+      option  tcplog
+      option  dontlognull
+      timeout connect 5s
+      timeout client  120s
+      timeout server  120s
+      timeout check   3s
+
+    frontend valkey_write
+      bind *:6379
+      default_backend valkey_primary
+
+    backend valkey_primary
+      mode tcp
+      balance first
+      option tcp-check
+      # PING for liveness
+      tcp-check send PING\r\n
+      tcp-check expect string +PONG
+      # ROLE returns a short RESP array - master appears on line 3
+      # Much simpler and faster than INFO replication
+      tcp-check send ROLE\r\n
+      tcp-check expect string master
+      tcp-check send QUIT\r\n
+      tcp-check expect string +OK
+
+      server valkey-0 valkey-0.valkey-headless.${NAMESPACE}.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers k8sdns init-addr none
+      server valkey-1 valkey-1.valkey-headless.${NAMESPACE}.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers k8sdns init-addr none
+      server valkey-2 valkey-2.valkey-headless.${NAMESPACE}.svc.cluster.local:6379 check inter 1s fall 2 rise 2 resolvers k8sdns init-addr none
+
+    frontend stats
+      bind *:8404
+      mode http
+      stats enable
+      stats uri /stats
+      stats refresh 2s
+      stats show-node
