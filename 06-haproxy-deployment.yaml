@@ -59,13 +59,11 @@ spec:
 
         # --- Failover manager sidecar ---
         - name: failover-manager
-          image: python:3.12-alpine
+          image: 10.30.52.67:32000/failover-manager:latest
           command:
-            - sh
-            - -c
-            - |
-              pip install redis --quiet --root-user-action=ignore
-              exec python -u /scripts/failover-manager.py
+            - python
+            - -u
+            - /scripts/failover-manager.py
           env:
             - name: PYTHONUNBUFFERED
               value: "1"

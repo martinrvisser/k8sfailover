@@ -20,7 +20,7 @@ spec:
 
   containers:
     - name: sentinel
-      image: percona/valkey-bundle:9.1-hardened
+      image: percona/valkey-bundle:9.1
       command: ["sh", "/etc/sentinel/sentinel-init.sh"]
       ports:
         - name: sentinel
@@ -67,7 +67,7 @@ spec:
 
   containers:
     - name: sentinel
-      image: percona/valkey-bundle:9.1-hardened
+      image: percona/valkey-bundle:9.1
       command: ["sh", "/etc/sentinel/sentinel-init.sh"]
       ports:
         - name: sentinel
@@ -114,7 +114,7 @@ spec:
 
   containers:
     - name: sentinel
-      image: percona/valkey-bundle:9.1-hardened
+      image: percona/valkey-bundle:9.1
       command: ["sh", "/etc/sentinel/sentinel-init.sh"]
       ports:
         - name: sentinel

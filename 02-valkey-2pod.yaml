@@ -13,7 +13,7 @@ spec:
 
   initContainers:
     - name: init-valkey
-      image: percona/valkey-bundle:9.1-hardened
+      image: percona/valkey-bundle:9.1
       command:
         - sh
         - -c
@@ -51,7 +51,7 @@ spec:
 
   containers:
     - name: valkey
-      image: percona/valkey-bundle:9.1-hardened
+      image: percona/valkey-bundle:9.1
       command: ["valkey-server", "/data/conf/valkey.conf"]
       ports:
         - name: valkey
@@ -98,7 +98,7 @@ spec:
 
   initContainers:
     - name: init-valkey
-      image: percona/valkey-bundle:9.1-hardened
+      image: percona/valkey-bundle:9.1
       command:
         - sh
         - -c
@@ -122,7 +122,7 @@ spec:
 
   containers:
     - name: valkey
-      image: percona/valkey-bundle:9.1-hardened
+      image: percona/valkey-bundle:9.1
       command: ["valkey-server", "/data/conf/valkey.conf"]
       ports:
         - name: valkey
