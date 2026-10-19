@@ -86,3 +86,26 @@ chmod +x demo.sh
 4. **Recovery** — re-applies the pod manifest to bring `valkey-0` back,
    waits for Sentinel to reconfigure it as a replica of the new primary, and
    prints the final cluster + HAProxy state.
+
+## Authentication
+
+Both credential sets are optional; without the Secrets everything runs
+unauthenticated as before.
+
+- **Failover manager → Sentinel**: create `valkey-sentinel-auth` with a
+  `password` key (and `username` if you use a Sentinel ACL user rather than
+  `requirepass`). The sidecar reads it as `SENTINEL_USERNAME` /
+  `SENTINEL_PASSWORD`.
+- **HAProxy health check → Valkey**: create `valkey-auth` with `username`
+  (`default` for plain `requirepass`) and `password`. The `ROLE` check then
+  sends `AUTH` first; without it every server fails the check once Valkey
+  requires a password.
+
+```bash
+kubectl -n valkey create secret generic valkey-sentinel-auth --from-literal=password='...'
+kubectl -n valkey create secret generic valkey-auth --from-literal=username=default --from-literal=password='...'
+```
+
+Enabling auth on Valkey and Sentinel themselves (`requirepass`,
+`masterauth`, `sentinel auth-pass`) is done in their own manifests.
+

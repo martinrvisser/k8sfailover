@@ -22,6 +22,15 @@ spec:
         # --- HAProxy ---
         - name: haproxy
           image: haproxy:2.9-alpine
+          # Optional: credentials for the ROLE health check. Ignored unless
+          # the valkey-auth Secret exists (see README, "Authentication").
+          env:
+            - name: VALKEY_USERNAME
+              valueFrom:
+                secretKeyRef: {name: valkey-auth, key: username, optional: true}
+            - name: VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: valkey-auth, key: password, optional: true}
           ports:
             - name: valkey
               containerPort: 6379
@@ -77,6 +86,14 @@ spec:
               value: "/var/run/haproxy/haproxy.sock"
             - name: HAPROXY_BACKEND
               value: "valkey_primary"
+            # Optional Sentinel credentials (issue #3). Ignored unless the
+            # valkey-sentinel-auth Secret exists.
+            - name: SENTINEL_USERNAME
+              valueFrom:
+                secretKeyRef: {name: valkey-sentinel-auth, key: username, optional: true}
+            - name: SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: valkey-sentinel-auth, key: password, optional: true}
             - name: NAMESPACE
               valueFrom:
                 fieldRef:
