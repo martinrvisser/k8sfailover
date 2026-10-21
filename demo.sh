@@ -18,19 +18,32 @@ NAMESPACE="${NAMESPACE:-valkey}"
 MANIFESTS_DIR="${MANIFESTS_DIR:-.}"
 POD_COUNT="${POD_COUNT:-3}"
 OP_INTERVAL="${OP_INTERVAL:-0.5}"
+SENTINEL_GROUP_NAME="mymaster"
 export NAMESPACE
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --namespace=*) NAMESPACE="${1#*=}" ;;
-    --namespace)   shift; NAMESPACE="$1" ;;
-    --manifests=*) MANIFESTS_DIR="${1#*=}" ;;
-    --manifests)   shift; MANIFESTS_DIR="$1" ;;
-    --pods=*)      POD_COUNT="${1#*=}" ;;
-    --pods)        shift; POD_COUNT="$1" ;;
-    --op-interval=*) OP_INTERVAL="${1#*=}" ;;
-    --op-interval)   shift; OP_INTERVAL="$1" ;;
-    --verbose|-v)  VERBOSE=true ;;
+  --namespace=*) NAMESPACE="${1#*=}" ;;
+  --namespace)
+    shift
+    NAMESPACE="$1"
+    ;;
+  --manifests=*) MANIFESTS_DIR="${1#*=}" ;;
+  --manifests)
+    shift
+    MANIFESTS_DIR="$1"
+    ;;
+  --pods=*) POD_COUNT="${1#*=}" ;;
+  --pods)
+    shift
+    POD_COUNT="$1"
+    ;;
+  --op-interval=*) OP_INTERVAL="${1#*=}" ;;
+  --op-interval)
+    shift
+    OP_INTERVAL="$1"
+    ;;
+  --verbose | -v) VERBOSE=true ;;
   esac
   shift
 done
@@ -99,7 +112,14 @@ result() {
 # Apply a manifest, substituting ${NAMESPACE} before sending to kubectl
 kube_apply() {
   show_cmd "envsubst '\${NAMESPACE}' < $1 | kubectl apply -f -"
-  envsubst '${NAMESPACE}' < "$1" | kubectl apply -f -
+  envsubst '${NAMESPACE}' <"$1" | kubectl apply -f -
+}
+
+# Build the ConfigMaps from Kustomize, then substitute the namespace in both
+# resource metadata and embedded configuration (for example, Sentinel DNS).
+kube_apply_configmaps() {
+  show_cmd "kubectl kustomize $MANIFESTS_DIR | envsubst '\${NAMESPACE}' | kubectl apply -f -"
+  kubectl kustomize "$MANIFESTS_DIR" | envsubst '${NAMESPACE}' | kubectl apply -f -
 }
 
 # Wait for a pod condition with a spinner
@@ -113,7 +133,7 @@ wait_pod() {
   show_cmd "kubectl get pod -n $NAMESPACE $pod -o jsonpath='{.status.phase}'"
   printf "  Waiting for %s to be %s " "$pod" "$condition"
   while ! kubectl get pod -n "$NAMESPACE" "$pod" \
-      -o jsonpath="{.status.phase}" 2>/dev/null | grep -q "Running"; do
+    -o jsonpath="{.status.phase}" 2>/dev/null | grep -q "Running"; do
     printf "\r  %s Waiting for %s to be %s (%ds)" \
       "${spinner[$((i % 10))]}" "$pod" "$condition" "$elapsed"
     sleep 1
@@ -125,8 +145,7 @@ wait_pod() {
       echo -e "  ${DIM}Pod status:${NC}"
       kubectl get pod -n "$NAMESPACE" "$pod" 2>&1 | sed 's/^/    /'
       echo -e "  ${DIM}Container states:${NC}"
-      kubectl get pod -n "$NAMESPACE" "$pod" -o jsonpath=\
-'{range .status.initContainerStatuses[*]}init/{.name}: {.state}{"\n"}{end}{range .status.containerStatuses[*]}{.name}: {.state}{"\n"}{end}' \
+      kubectl get pod -n "$NAMESPACE" "$pod" -o jsonpath='{range .status.initContainerStatuses[*]}init/{.name}: {.state}{"\n"}{end}{range .status.containerStatuses[*]}{.name}: {.state}{"\n"}{end}' \
         2>/dev/null | sed 's/^/    /'
       echo -e "  ${DIM}Recent events:${NC}"
       kubectl get events -n "$NAMESPACE" --field-selector "involvedObject.name=$pod" \
@@ -143,7 +162,7 @@ wait_pod() {
 
 clear
 echo -e "${BOLD}${MAGENTA}"
-cat << 'BANNER'
+cat <<'BANNER'
   ╔═══════════════════════════════════════════════════════════╗
   ║                                                           ║
   ║   Valkey HA on Kubernetes                                 ║
@@ -216,7 +235,7 @@ fi
 proceed
 
 kube_apply "$MANIFESTS_DIR/07-client-service.yaml"
-kube_apply "$MANIFESTS_DIR/01-sentinel-configmap.yaml"
+kube_apply_configmaps
 
 if [ "$POD_COUNT" -eq 3 ]; then
   kube_apply "$MANIFESTS_DIR/02-valkey-statefulset.yaml"
@@ -226,8 +245,6 @@ else
 fi
 
 kube_apply "$MANIFESTS_DIR/03-services.yaml"
-kube_apply "$MANIFESTS_DIR/04-haproxy-configmap.yaml"
-kube_apply "$MANIFESTS_DIR/05-failover-manager-configmap.yaml"
 kube_apply "$MANIFESTS_DIR/06-haproxy-deployment.yaml"
 
 narrate "Waiting for all pods to reach Running state..."
@@ -271,9 +288,9 @@ for i in $(seq 0 "$LAST_POD"); do
   echo -e "\n  ${BOLD}valkey-$i:${NC}"
   show_cmd "kubectl exec -n $NAMESPACE valkey-$i -c valkey -- valkey-cli info replication"
   kubectl exec -n "$NAMESPACE" "valkey-$i" -c valkey -- \
-    valkey-cli info replication 2>/dev/null \
-    | grep -E "^role:|^connected_slaves:|^master_host:" \
-    | sed 's/^/    /'
+    valkey-cli info replication 2>/dev/null |
+    grep -E "^role:|^connected_slaves:|^master_host:" |
+    sed 's/^/    /'
 done
 
 proceed
@@ -282,18 +299,18 @@ narrate "All 3 Sentinel instances should agree on the same primary."
 echo ""
 if [ "$POD_COUNT" -eq 3 ]; then
   for i in 0 1 2; do
-    show_cmd "kubectl exec -n $NAMESPACE valkey-$i -c sentinel -- valkey-cli -p 26379 sentinel get-master-addr-by-name mymaster"
+    show_cmd "kubectl exec -n $NAMESPACE valkey-$i -c sentinel -- valkey-cli -p 26379 sentinel get-master-addr-by-name ${SENTINEL_GROUP_NAME}"
     local_primary=$(kubectl exec -n "$NAMESPACE" "valkey-$i" -c sentinel -- \
-      valkey-cli -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null \
-      | tr '\n' ':' | sed 's/:$//')
+      valkey-cli -p 26379 sentinel get-master-addr-by-name ${SENTINEL_GROUP_NAME} 2>/dev/null |
+      tr '\n' ':' | sed 's/:$//')
     echo -e "  ${BOLD}valkey-$i sentinel${NC} sees primary at: ${GREEN}$local_primary${NC}"
   done
 else
   for i in 0 1 2; do
-    show_cmd "kubectl exec -n $NAMESPACE sentinel-$i -c sentinel -- valkey-cli -p 26379 sentinel get-master-addr-by-name mymaster"
+    show_cmd "kubectl exec -n $NAMESPACE sentinel-$i -c sentinel -- valkey-cli -p 26379 sentinel get-master-addr-by-name ${SENTINEL_GROUP_NAME}"
     local_primary=$(kubectl exec -n "$NAMESPACE" "sentinel-$i" -c sentinel -- \
-      valkey-cli -p 26379 sentinel get-master-addr-by-name mymaster 2>/dev/null \
-      | tr '\n' ':' | sed 's/:$//')
+      valkey-cli -p 26379 sentinel get-master-addr-by-name ${SENTINEL_GROUP_NAME} 2>/dev/null |
+      tr '\n' ':' | sed 's/:$//')
     echo -e "  ${BOLD}sentinel-$i${NC} sees primary at: ${GREEN}$local_primary${NC}"
   done
 fi
@@ -393,8 +410,8 @@ while [ $ELAPSED -lt 30 ]; do
       -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
     [ "$PHASE" != "Running" ] && continue
     ROLE=$(kubectl exec -n "$NAMESPACE" "valkey-$i" -c valkey -- \
-      valkey-cli info replication 2>/dev/null \
-      | grep "^role:" | tr -d '[:space:]' | cut -d: -f2 || echo "")
+      valkey-cli info replication 2>/dev/null |
+      grep "^role:" | tr -d '[:space:]' | cut -d: -f2 || echo "")
     if [ "$ROLE" = "master" ]; then
       NEW_PRIMARY="valkey-$i"
       break 2
@@ -417,11 +434,15 @@ kill $WRITER_PID &>/dev/null || true
 sleep 1
 
 # Analyse write/read log (format: ts op_index TYPE key STATUS extra)
-TOTAL=$(wc -l < "$WRITE_LOG" 2>/dev/null || echo 0)
-WRITE_TOTAL=$(grep -c " WRITE " "$WRITE_LOG" 2>/dev/null || true); WRITE_TOTAL=${WRITE_TOTAL:-0}
-WRITE_ERR=$(grep " WRITE " "$WRITE_LOG" 2>/dev/null | grep -c " ERR " || true); WRITE_ERR=${WRITE_ERR:-0}
-READ_TOTAL=$(grep -c " READ " "$WRITE_LOG" 2>/dev/null || true); READ_TOTAL=${READ_TOTAL:-0}
-READ_ERR=$(grep " READ " "$WRITE_LOG" 2>/dev/null | grep -c " ERR " || true); READ_ERR=${READ_ERR:-0}
+TOTAL=$(wc -l <"$WRITE_LOG" 2>/dev/null || echo 0)
+WRITE_TOTAL=$(grep -c " WRITE " "$WRITE_LOG" 2>/dev/null || true)
+WRITE_TOTAL=${WRITE_TOTAL:-0}
+WRITE_ERR=$(grep " WRITE " "$WRITE_LOG" 2>/dev/null | grep -c " ERR " || true)
+WRITE_ERR=${WRITE_ERR:-0}
+READ_TOTAL=$(grep -c " READ " "$WRITE_LOG" 2>/dev/null || true)
+READ_TOTAL=${READ_TOTAL:-0}
+READ_ERR=$(grep " READ " "$WRITE_LOG" 2>/dev/null | grep -c " ERR " || true)
+READ_ERR=${READ_ERR:-0}
 ERRORS=$((WRITE_ERR + READ_ERR))
 SUCCESS=$((TOTAL - ERRORS))
 if [ "$TOTAL" -gt 0 ]; then
@@ -443,9 +464,9 @@ proceed
 narrate "Failover manager log — confirming it caught the +switch-master event:"
 echo ""
 show_cmd "kubectl logs -n $NAMESPACE $HAPROXY_POD -c failover-manager --tail=20"
-kubectl logs -n "$NAMESPACE" "$HAPROXY_POD" -c failover-manager --tail=20 \
-  | grep -E "switch-master|Failover|primary|INFO" \
-  | sed 's/^/  /' || true
+kubectl logs -n "$NAMESPACE" "$HAPROXY_POD" -c failover-manager --tail=20 |
+  grep -E "switch-master|Failover|primary|INFO" |
+  sed 's/^/  /' || true
 
 proceed
 
@@ -453,8 +474,8 @@ narrate "HAProxy now routes to the new primary:"
 echo ""
 show_cmd "kubectl exec -n $NAMESPACE valkey-demo-client -- valkey-cli -h valkey-endpoint -p 6379 info replication"
 ROLE_VIA_HAPROXY=$(kubectl exec -n "$NAMESPACE" valkey-demo-client -- \
-  valkey-cli -h valkey-endpoint -p 6379 info replication 2>/dev/null \
-  | grep "^role:" | tr -d '[:space:]' | cut -d: -f2 || echo "unknown")
+  valkey-cli -h valkey-endpoint -p 6379 info replication 2>/dev/null |
+  grep "^role:" | tr -d '[:space:]' | cut -d: -f2 || echo "unknown")
 echo -e "  Role via valkey-endpoint: ${GREEN}${BOLD}$ROLE_VIA_HAPROXY${NC}"
 
 echo ""
@@ -494,8 +515,8 @@ while [ "$RECONF_ELAPSED" -lt 60 ]; do
   sleep 2
   RECONF_ELAPSED=$((RECONF_ELAPSED + 2))
   RECONF_ROLE=$(kubectl exec -n "$NAMESPACE" valkey-0 -c valkey -- \
-    valkey-cli info replication 2>/dev/null \
-    | grep "^role:" | tr -d '[:space:]' | cut -d: -f2 || echo "")
+    valkey-cli info replication 2>/dev/null |
+    grep "^role:" | tr -d '[:space:]' | cut -d: -f2 || echo "")
   if [ "$RECONF_ROLE" = "slave" ]; then
     printf "\r  ${GREEN}✓${NC} valkey-0 reconfigured as replica by Sentinel (%ds)              \n" "$RECONF_ELAPSED"
     break
@@ -511,8 +532,8 @@ narrate "Final cluster state:"
 for i in $(seq 0 "$LAST_POD"); do
   show_cmd "kubectl exec -n $NAMESPACE valkey-$i -c valkey -- valkey-cli info replication"
   ROLE=$(kubectl exec -n "$NAMESPACE" "valkey-$i" -c valkey -- \
-    valkey-cli info replication 2>/dev/null \
-    | grep "^role:" | tr -d '[:space:]' | cut -d: -f2 || echo "unknown")
+    valkey-cli info replication 2>/dev/null |
+    grep "^role:" | tr -d '[:space:]' | cut -d: -f2 || echo "unknown")
   if [ "$ROLE" = "master" ]; then
     echo -e "  ${BOLD}valkey-$i${NC}: ${GREEN}${BOLD}primary${NC}"
   else

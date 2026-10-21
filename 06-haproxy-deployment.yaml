@@ -27,10 +27,12 @@ spec:
           env:
             - name: VALKEY_USERNAME
               valueFrom:
-                secretKeyRef: {name: valkey-auth, key: username, optional: true}
+                secretKeyRef:
+                  { name: valkey-auth, key: username, optional: true }
             - name: VALKEY_PASSWORD
               valueFrom:
-                secretKeyRef: {name: valkey-auth, key: password, optional: true}
+                secretKeyRef:
+                  { name: valkey-auth, key: password, optional: true }
           ports:
             - name: valkey
               containerPort: 6379
@@ -68,9 +70,10 @@ spec:
 
         # --- Failover manager sidecar ---
         - name: failover-manager
-          image: 10.30.52.67:32000/failover-manager:latest
+          image: failover-manager:latest
+          imagePullPolicy: Never
           command:
-            - python
+            - python3
             - -u
             - /scripts/failover-manager.py
           env:
@@ -90,10 +93,12 @@ spec:
             # valkey-sentinel-auth Secret exists.
             - name: SENTINEL_USERNAME
               valueFrom:
-                secretKeyRef: {name: valkey-sentinel-auth, key: username, optional: true}
+                secretKeyRef:
+                  { name: valkey-sentinel-auth, key: username, optional: true }
             - name: SENTINEL_PASSWORD
               valueFrom:
-                secretKeyRef: {name: valkey-sentinel-auth, key: password, optional: true}
+                secretKeyRef:
+                  { name: valkey-sentinel-auth, key: password, optional: true }
             - name: NAMESPACE
               valueFrom:
                 fieldRef:
