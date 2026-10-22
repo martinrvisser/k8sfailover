@@ -1,0 +1,7 @@
+# e2e_failover_test.sh output
+e2e_traffic.log
+e2e_results.log
+
+# Python
+__pycache__/
+.pytest_cache/
