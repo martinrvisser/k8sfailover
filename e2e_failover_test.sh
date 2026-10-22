@@ -7,14 +7,13 @@ LOG_FILE="e2e_traffic.log"
 RESULTS_FILE="e2e_results.log"
 OP_INTERVAL="${OP_INTERVAL:-0.2}"
 
-# The manifest points at a private registry KinD can't reach, so build the
-# failover-manager image locally and swap it in at apply time.
-REGISTRY_FM_IMAGE="10.30.52.67:32000/failover-manager:latest"
-FM_IMAGE="${FM_IMAGE:-failover-manager:e2e}"
+# 06-haproxy-deployment.yaml uses this tag with imagePullPolicy: Never, so it
+# must be built locally and loaded into the KinD node.
+FM_IMAGE="failover-manager:latest"
 PUBLIC_IMAGES=(percona/valkey-bundle:9.1 haproxy:2.9-alpine)
 
 echo "🐳 Building failover-manager image '$FM_IMAGE'..."
-docker build -t "$FM_IMAGE" -f Dockerfile.failover-manager .
+docker build -t "$FM_IMAGE" -f failover-manager/failover-manager.Dockerfile failover-manager
 
 echo "🐳 Pulling public images..."
 for img in "${PUBLIC_IMAGES[@]}"; do
@@ -53,11 +52,12 @@ while ! kubectl get serviceaccount default -n "$NAMESPACE" >/dev/null 2>&1; do
     sleep 1
 done
 
+echo "📦 Applying ConfigMaps from Kustomize..."
+kubectl kustomize . | envsubst '${NAMESPACE}' | kubectl apply -f -
+
 echo "📦 Applying remaining Valkey HA manifests..."
-for file in 01-sentinel-configmap.yaml 02-valkey-statefulset.yaml 03-services.yaml 04-haproxy-configmap.yaml 05-failover-manager-configmap.yaml 06-haproxy-deployment.yaml; do
-    envsubst '${NAMESPACE}' < "$file" \
-        | sed "s|image: ${REGISTRY_FM_IMAGE}|image: ${FM_IMAGE}\n          imagePullPolicy: IfNotPresent|" \
-        | kubectl apply -f -
+for file in 02-valkey-statefulset.yaml 03-services.yaml 06-haproxy-deployment.yaml; do
+    envsubst '${NAMESPACE}' < "$file" | kubectl apply -f -
 done
 
 echo "⏳ Waiting for all pods in namespace '$NAMESPACE' to be Ready..."

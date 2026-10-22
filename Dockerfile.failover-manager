@@ -1,9 +1,0 @@
-# Runtime for the failover-manager sidecar in 06-haproxy-deployment.yaml.
-# The script itself is mounted from the failover-manager-script ConfigMap
-# at /scripts/failover-manager.py, so the image only needs Python + redis.
-FROM python:3.12-slim
-
-RUN pip install --no-cache-dir redis==5.2.1
-
-ENTRYPOINT []
-CMD ["python", "-u", "/scripts/failover-manager.py"]
